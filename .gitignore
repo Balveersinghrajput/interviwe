@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Next.js build output
+.next/
+**/next/
+out/
+build/
+dist/
+
+# Database data directory
+server/data/
+**/data/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.production.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# System files
+.DS_Store
+*.pem
+
+# IDE / Editor files
+.vscode/
+.idea/
