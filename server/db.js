@@ -78,29 +78,38 @@ async function autoSeedIfEmpty() {
 }
 
 async function connectDatabase() {
+  const isLocal = MONGODB_URI.includes('127.0.0.1') || MONGODB_URI.includes('localhost');
+  const isSrv = MONGODB_URI.startsWith('mongodb+srv://');
+
+  const connectOptions = {
+    serverSelectionTimeoutMS: isSrv ? 10000 : 5000,
+  };
+
+  if (isLocal && !isSrv) {
+    connectOptions.directConnection = true;
+  }
+
   try {
-    await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 3000,
-      directConnection: true
-    });
+    await mongoose.connect(MONGODB_URI, connectOptions);
     console.log('✅ Connected to MongoDB');
     await autoSeedIfEmpty();
   } catch (err) {
-    if (err.message.includes('ECONNREFUSED') || err.name === 'MongooseServerSelectionError') {
-      console.log('⚠️ MongoDB not running on 127.0.0.1:27017. Attempting to start mongod automatically...');
+    if (isLocal && (err.message.includes('ECONNREFUSED') || err.name === 'MongooseServerSelectionError')) {
+      console.log('⚠️ Local MongoDB not running on 127.0.0.1:27017. Attempting to start mongod automatically...');
       const started = await startLocalMongod();
       if (started) {
-        await mongoose.connect(MONGODB_URI, {
-          serverSelectionTimeoutMS: 5000,
-          directConnection: true
-        });
-        console.log('✅ Auto-started MongoDB and connected successfully!');
+        await mongoose.connect(MONGODB_URI, connectOptions);
+        console.log('✅ Auto-started local MongoDB and connected successfully!');
         await autoSeedIfEmpty();
         return;
       }
     }
     console.error('❌ MongoDB connection error:', err.message);
-    console.error('💡 Please start MongoDB manually: mongod --dbpath /tmp/interviewhub_data --bind_ip 127.0.0.1');
+    if (isLocal) {
+      console.error('💡 Please start MongoDB manually: mongod --dbpath /tmp/interviewhub_data --bind_ip 127.0.0.1');
+    } else {
+      console.error('💡 Check your MONGODB_URI credentials, IP whitelist in MongoDB Atlas, and network connectivity.');
+    }
     throw err;
   }
 }
