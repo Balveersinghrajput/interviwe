@@ -1,4 +1,5 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
+// const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
+const API_BASE = "https://inter-view-backend.onrender.com/api";
 
 
 async function handleResponse(res, defaultErrorMsg) {
@@ -7,7 +8,7 @@ async function handleResponse(res, defaultErrorMsg) {
     try {
       const err = await res.json();
       errMsg = err.error || err.message || defaultErrorMsg;
-    } catch (e) {}
+    } catch (e) { }
     throw new Error(errMsg);
   }
   return res.json();
