@@ -11,7 +11,8 @@ export default function AddQuestionModal({ onClose, onSubmit }) {
     difficulty: 'Medium',
     question: '',
     answer: '',
-    code_example: ''
+    code_example: '',
+    youtube_link: ''
   });
   const [loading, setLoading] = useState(false);
 
@@ -89,8 +90,17 @@ export default function AddQuestionModal({ onClose, onSubmit }) {
               value={form.code_example}
               onChange={e => handleChange('code_example', e.target.value)}
               placeholder="// Add code example here..."
-              rows={5}
+              rows={4}
               style={{fontFamily: "'JetBrains Mono', monospace"}}
+            />
+          </div>
+          <div className="form-group">
+            <label>YouTube Video Tutorial Link (optional)</label>
+            <input
+              type="url"
+              value={form.youtube_link}
+              onChange={e => handleChange('youtube_link', e.target.value)}
+              placeholder="https://www.youtube.com/watch?v=..."
             />
           </div>
           <button type="submit" className="btn btn-primary" style={{width:'100%',justifyContent:'center'}} disabled={loading}>

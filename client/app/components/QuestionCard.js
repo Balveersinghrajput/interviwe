@@ -21,6 +21,28 @@ export default function QuestionCard({ question, onDelete }) {
                 📁 {question.source_file}
               </span>
             )}
+            <a 
+              href={question.youtube_link || `https://www.youtube.com/results?search_query=${encodeURIComponent((question.language || '') + ' ' + (question.question || '') + ' coding tutorial')}`}
+              target="_blank" 
+              rel="noopener noreferrer" 
+              onClick={(e) => e.stopPropagation()} 
+              className="badge"
+              style={{
+                background: 'rgba(239, 68, 68, 0.12)',
+                color: '#f87171',
+                border: '1px solid rgba(239, 68, 68, 0.25)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                textDecoration: 'none',
+                cursor: 'pointer',
+                transition: 'background 0.2s'
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)'}
+            >
+              📺 YouTube Video
+            </a>
           </div>
         </div>
         {question.is_user_added && onDelete && (

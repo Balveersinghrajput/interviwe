@@ -86,7 +86,7 @@ router.get('/:id', async (req, res) => {
 // POST /api/questions — Add a new question
 router.post('/', async (req, res) => {
   try {
-    const { language, category, difficulty, question, answer, code_example, source_file } = req.body;
+    const { language, category, difficulty, question, answer, code_example, youtube_link, source_file } = req.body;
     if (!language || !category || !difficulty || !question || !answer) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -95,6 +95,7 @@ router.post('/', async (req, res) => {
       difficulty: normalizeDifficulty(difficulty), 
       question, answer,
       code_example: code_example || '',
+      youtube_link: youtube_link || '',
       is_user_added: true,
       source_file: source_file || null
     });
@@ -198,10 +199,10 @@ router.put('/:id', async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: 'Invalid question ID format' });
     }
-    const { language, category, difficulty, question, answer, code_example } = req.body;
+    const { language, category, difficulty, question, answer, code_example, youtube_link } = req.body;
     const updated = await Question.findByIdAndUpdate(
       req.params.id,
-      { language, category, difficulty: normalizeDifficulty(difficulty), question, answer, code_example: code_example || '' },
+      { language, category, difficulty: normalizeDifficulty(difficulty), question, answer, code_example: code_example || '', youtube_link: youtube_link || '' },
       { new: true }
     );
     if (!updated) return res.status(404).json({ error: 'Question not found' });

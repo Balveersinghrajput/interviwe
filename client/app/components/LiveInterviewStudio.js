@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
@@ -12,6 +12,10 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
   const [difficulty, setDifficulty] = useState('Mid-Senior Level');
   const [language, setLanguage] = useState('Java / JavaScript');
   const [enableVoice, setEnableVoice] = useState(true);
+  const [handsFree, setHandsFree] = useState(false);
+  const [resumeText, setResumeText] = useState('');
+  const [uploadedFileName, setUploadedFileName] = useState('');
+  const [uploading, setUploading] = useState(false);
 
   // Computed job role
   const effectiveJobRole = jobRoleSelect === 'Custom Role' ? (customJobRole.trim() || 'Software Engineer') : jobRoleSelect;
@@ -33,10 +37,246 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
   const [speechStatus, setSpeechStatus] = useState('Idle'); // 'Idle' | 'Speaking' | 'Listening' | 'Thinking'
   const recognitionRef = useRef(null);
 
+  // Audio Canvas Visualizer Refs
+  const canvasRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const analyserRef = useRef(null);
+  const micSourceRef = useRef(null);
+  const animationFrameRef = useRef(null);
+
+  // Automation / Silence Detection Refs
+  const handsFreeRef = useRef(handsFree);
+  const speechStatusRef = useRef(speechStatus);
+  const isListeningRef = useRef(isListening);
+  const submitAnswerRef = useRef(null);
+  const silenceTimeoutRef = useRef(null);
+  const fileInputRef = useRef(null);
+
   // Results state
   const [evalResult, setEvalResult] = useState(null);
   const [allEvaluations, setAllEvaluations] = useState([]);
   const [finalScorecard, setFinalScorecard] = useState(null);
+  const [feedbackCountdown, setFeedbackCountdown] = useState(7);
+
+  // Sync state values to refs to avoid closure stale state in SpeechRecognition callbacks
+  useEffect(() => {
+    handsFreeRef.current = handsFree;
+  }, [handsFree]);
+
+  useEffect(() => {
+    speechStatusRef.current = speechStatus;
+  }, [speechStatus]);
+
+  useEffect(() => {
+    isListeningRef.current = isListening;
+  }, [isListening]);
+
+  // Clean Audio Context & Mic Stream releases
+  const stopMicMonitoring = useCallback(() => {
+    if (micSourceRef.current) {
+      try {
+        micSourceRef.current.mediaStream.getTracks().forEach(track => track.stop());
+      } catch (e) {}
+      micSourceRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      try {
+        audioCtxRef.current.close();
+      } catch (e) {}
+      audioCtxRef.current = null;
+    }
+    analyserRef.current = null;
+  }, []);
+
+  const startMicMonitoring = useCallback(async () => {
+    try {
+      if (audioCtxRef.current) return;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtxClass) return;
+
+      const audioCtx = new AudioCtxClass();
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      source.connect(analyser);
+
+      audioCtxRef.current = audioCtx;
+      analyserRef.current = analyser;
+      micSourceRef.current = source;
+    } catch (err) {
+      console.warn("🎙️ Mic access blocked/unsupported for live visualizer:", err);
+    }
+  }, []);
+
+  // Monitor microphone recording state
+  useEffect(() => {
+    if (isListening) {
+      startMicMonitoring();
+    } else {
+      stopMicMonitoring();
+    }
+    return () => {
+      stopMicMonitoring();
+    };
+  }, [isListening, startMicMonitoring, stopMicMonitoring]);
+
+  // Canvas visualizer waveform drawing loop
+  useEffect(() => {
+    if (step !== 'interview') {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      return;
+    }
+
+    const draw = () => {
+      animationFrameRef.current = requestAnimationFrame(draw);
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
+
+      ctx.clearRect(0, 0, width, height);
+
+      const status = speechStatusRef.current;
+      const analyser = analyserRef.current;
+
+      let dataArray = [];
+      let bufferLength = 0;
+
+      if (status === 'Listening' && analyser) {
+        bufferLength = analyser.frequencyBinCount;
+        dataArray = new Uint8Array(bufferLength);
+        analyser.getByteTimeDomainData(dataArray);
+      }
+
+      ctx.lineWidth = 2.5;
+      const gradient = ctx.createLinearGradient(0, 0, width, 0);
+      gradient.addColorStop(0, '#06b6d4'); // Cyan
+      gradient.addColorStop(0.5, '#6366f1'); // Purple
+      gradient.addColorStop(1, '#a855f7'); // Violet
+      ctx.strokeStyle = gradient;
+      ctx.beginPath();
+
+      if (status === 'Listening' && dataArray.length > 0) {
+        // Draw real mic waveform
+        const sliceWidth = width / bufferLength;
+        let x = 0;
+        for (let i = 0; i < bufferLength; i++) {
+          const v = dataArray[i] / 128.0;
+          const y = (v * height) / 2;
+          if (i === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+          x += sliceWidth;
+        }
+      } else if (status === 'Speaking') {
+        // AI Interviewer Speaking: Simulated overlapping sine waves
+        const time = Date.now() * 0.015;
+        ctx.moveTo(0, height / 2);
+        for (let x = 0; x < width; x++) {
+          const y = height / 2 +
+                    Math.sin(x * 0.04 + time) * 8 * Math.sin(x * 0.01) +
+                    Math.sin(x * 0.08 - time * 1.3) * 3;
+          ctx.lineTo(x, y);
+        }
+      } else if (status === 'Thinking') {
+        // Evaluating Answer: Pulsing wave
+        const time = Date.now() * 0.005;
+        ctx.moveTo(0, height / 2);
+        for (let x = 0; x < width; x++) {
+          const y = height / 2 + Math.sin(x * 0.025 + time) * 3;
+          ctx.lineTo(x, y);
+        }
+      } else {
+        // Idle state: straight line with resting noise
+        ctx.moveTo(0, height / 2);
+        for (let x = 0; x < width; x++) {
+          const y = height / 2 + Math.sin(x * 0.06 + Date.now() * 0.001) * 0.5;
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+    };
+
+    draw();
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [step]);
+
+  // Clean close handler to stop synthesis, dictation, and visualizer loops
+  const handleClose = () => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+    }
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current);
+    }
+    stopMicMonitoring();
+    onClose();
+  };
+
+  const startListeningAuto = useCallback(() => {
+    if (!recognitionRef.current || isListeningRef.current) return;
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    try {
+      recognitionRef.current.start();
+      setIsListening(true);
+      setSpeechStatus('Listening');
+    } catch (e) {
+      console.error('Could not auto-start SpeechRecognition:', e);
+    }
+  }, []);
+
+  // Text-To-Speech function
+  const speakText = useCallback((text) => {
+    if (!enableVoice || typeof window === 'undefined' || !window.speechSynthesis) return;
+
+    // Pause mic recording to avoid echo feedback loop
+    const wasListening = isListeningRef.current;
+    if (wasListening && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+    }
+
+    window.speechSynthesis.cancel(); // Stop current speech
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+
+    utterance.onstart = () => setSpeechStatus('Speaking');
+    utterance.onend = () => {
+      setSpeechStatus('Idle');
+      if (handsFreeRef.current || wasListening) {
+        startListeningAuto();
+      }
+    };
+    utterance.onerror = () => {
+      setSpeechStatus('Idle');
+      if (handsFreeRef.current || wasListening) {
+        startListeningAuto();
+      }
+    };
+
+    window.speechSynthesis.speak(utterance);
+  }, [enableVoice, startListeningAuto]);
 
   // Initialize Speech Recognition cleanly without double typing
   useEffect(() => {
@@ -62,6 +302,19 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
               return cleanPrev ? `${cleanPrev} ${cleanNew}` : cleanNew;
             });
           }
+
+          // Hands-free 3s silence detection auto-submit trigger
+          if (handsFreeRef.current) {
+            if (silenceTimeoutRef.current) {
+              clearTimeout(silenceTimeoutRef.current);
+            }
+            silenceTimeoutRef.current = setTimeout(() => {
+              console.log("🤫 Silence detected for 3 seconds. Auto-submitting candidate response...");
+              if (submitAnswerRef.current) {
+                submitAnswerRef.current();
+              }
+            }, 3000);
+          }
         };
 
         recognition.onerror = (err) => {
@@ -80,21 +333,6 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
     }
   }, []);
 
-  // Text-To-Speech function
-  const speakText = (text) => {
-    if (!enableVoice || typeof window === 'undefined' || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel(); // Stop previous audio
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
-
-    utterance.onstart = () => setSpeechStatus('Speaking');
-    utterance.onend = () => setSpeechStatus('Idle');
-    utterance.onerror = () => setSpeechStatus('Idle');
-
-    window.speechSynthesis.speak(utterance);
-  };
-
   const toggleVoiceDictation = () => {
     if (!recognitionRef.current) {
       alert('Speech recognition is not supported in your browser. You can type your response in the text box!');
@@ -106,7 +344,9 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
       setIsListening(false);
       setSpeechStatus('Idle');
     } else {
-      window.speechSynthesis.cancel();
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
       try {
         recognitionRef.current.start();
         setIsListening(true);
@@ -114,6 +354,52 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
       } catch (e) {
         console.error('Could not start recognition:', e);
       }
+    }
+  };
+
+  const handleResumeUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Check file extension
+    const allowedExtensions = /(\.pdf|\.txt|\.md)$/i;
+    if (!allowedExtensions.exec(file.name)) {
+      setError('Please upload a PDF, TXT, or MD resume file.');
+      return;
+    }
+
+    setError('');
+    setUploading(true);
+
+    const formData = new FormData();
+    formData.append('resume', file);
+
+    try {
+      const response = await fetch(`${API_BASE}/interview/upload-resume`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to parse resume');
+      }
+
+      setResumeText(data.text);
+      setUploadedFileName(data.fileName || file.name);
+    } catch (err) {
+      console.error(err);
+      setError(`Failed to process resume: ${err.message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removeUploadedResume = () => {
+    setResumeText('');
+    setUploadedFileName('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
@@ -131,7 +417,8 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
           jobRole: effectiveJobRole,
           interviewType,
           difficulty,
-          language
+          language,
+          resumeText
         })
       });
 
@@ -200,7 +487,7 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
   };
 
   // Submit Answer to AI for Evaluation
-  const submitAnswer = async () => {
+  const submitAnswer = useCallback(async () => {
     if (!userExplanation.trim() && !userCode.trim()) {
       alert('Please speak or type your response before submitting!');
       return;
@@ -208,10 +495,16 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
 
     setLoading(true);
     setSpeechStatus('Thinking');
-    window.speechSynthesis.cancel();
-    if (isListening && recognitionRef.current) {
-      recognitionRef.current.stop();
-      setIsListening(false);
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+    }
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current);
     }
 
     // Append candidate answer to chat history
@@ -236,7 +529,8 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
           currentStage,
           userCode,
           userExplanation,
-          stageNumber
+          stageNumber,
+          resumeText
         })
       });
 
@@ -260,10 +554,15 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
       setLoading(false);
       setSpeechStatus('Idle');
     }
-  };
+  }, [userExplanation, userCode, effectiveJobRole, interviewType, difficulty, language, currentStage, stageNumber, speakText]);
+
+  // Keep submitAnswerRef updated
+  useEffect(() => {
+    submitAnswerRef.current = submitAnswer;
+  }, [submitAnswer]);
 
   // Proceed to Next Stage
-  const proceedToNextStage = () => {
+  const proceedToNextStage = useCallback(() => {
     if (!evalResult || !evalResult.nextStage) return;
     const nextStg = evalResult.nextStage;
     setCurrentStage(nextStg);
@@ -287,7 +586,28 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
     if (nextStg.verbalPrompt || nextStg.interviewerMessage) {
       speakText(nextStg.verbalPrompt || nextStg.interviewerMessage);
     }
-  };
+  }, [evalResult, speakText]);
+
+  // Auto-advance feedback countdown in hands-free mode
+  useEffect(() => {
+    if (step !== 'feedback' || !handsFree) {
+      setFeedbackCountdown(7);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setFeedbackCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          proceedToNextStage();
+          return 7;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [step, handsFree, proceedToNextStage]);
 
   if (!isOpen) return null;
 
@@ -318,12 +638,12 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
                 {speechStatus === 'Speaking' ? '🔊 AI Interviewer Speaking...' : speechStatus === 'Listening' ? '🔴 Recording Voice Answer...' : speechStatus === 'Thinking' ? '🟡 AI Evaluating Stage...' : '🟢 Live Session Active'}
               </span>
               <span style={{ fontSize: 13, fontWeight: 700, color: '#38bdf8', padding: '4px 12px', background: 'rgba(56,189,248,0.1)', borderRadius: 20, border: '1px solid rgba(56,189,248,0.2)' }}>
-                Stage {stageNumber} / 4
+                Stage {stageNumber} / 29
               </span>
             </div>
           )}
 
-          <button className="modal-close" onClick={onClose} style={{ fontSize: 22 }}>✕</button>
+          <button className="modal-close" onClick={handleClose} style={{ fontSize: 22 }}>✕</button>
         </div>
 
         {/* Studio Body Content */}
@@ -343,7 +663,7 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
                 <span>🚀 Configure Your Live Interview Session</span>
               </h3>
               <p style={{ fontSize: 14, color: '#a1a1aa', marginBottom: 24, lineHeight: 1.6 }}>
-                Prepare for any job role with a natural 4-stage conversational interview (Self Intro ➔ Resume & Skills ➔ Major Projects ➔ Technical Challenge ➔ Detailed Scorecard).
+                Prepare for any job role with an in-depth 29-stage conversational interview (Intro & Projects ➔ 20 Technical & Behavioral Questions ➔ 4 Live Coding & Database Challenges ➔ Detailed Scorecard).
               </p>
 
               {/* Job Role Selection */}
@@ -408,15 +728,56 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
                 </div>
 
                 <div className="form-group" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                  <label style={{ fontWeight: 600, color: '#f4f4f5', marginBottom: 8 }}>🔊 Voice Speech Synthesis:</label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 14, color: '#a1a1aa' }}>
+                  <label style={{ fontWeight: 600, color: '#f4f4f5', marginBottom: 8 }}>🎙️ Voice Settings:</label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 14, color: '#a1a1aa', marginBottom: 8 }}>
                     <input type="checkbox" checked={enableVoice} onChange={(e) => setEnableVoice(e.target.checked)} style={{ width: 18, height: 18 }} />
                     Enable Voice Audio (AI Speaks Questions)
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 14, color: '#a1a1aa' }}>
+                    <input type="checkbox" checked={handsFree} onChange={(e) => setHandsFree(e.target.checked)} style={{ width: 18, height: 18 }} />
+                    🎙️ Enable Hands-Free Auto-Submit Mode
                   </label>
                 </div>
               </div>
 
-              <button className="btn btn-primary" onClick={startInterview} disabled={loading} style={{ width: '100%', padding: '14px', fontSize: 16, fontWeight: 700, justifyContent: 'center', background: 'linear-gradient(135deg, #06b6d4, #6366f1)' }}>
+              {/* Resume Upload Section */}
+              <div style={{ marginBottom: 24, padding: 18, background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.12)', borderRadius: 12 }}>
+                <label style={{ fontWeight: 600, color: '#f4f4f5', marginBottom: 8, display: 'block' }}>📄 Personalize with your Resume (PDF, TXT, MD):</label>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <button 
+                    type="button" 
+                    className="btn btn-secondary" 
+                    onClick={() => fileInputRef.current?.click()}
+                    style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}
+                    disabled={uploading}
+                  >
+                    📁 {uploading ? 'Parsing Resume...' : 'Upload CV / Resume'}
+                  </button>
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    onChange={handleResumeUpload} 
+                    accept=".pdf,.txt,.md" 
+                    style={{ display: 'none' }} 
+                  />
+                  {uploadedFileName ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(56,189,248,0.1)', padding: '6px 12px', borderRadius: 8, border: '1px solid rgba(56,189,248,0.2)' }}>
+                      <span style={{ fontSize: 13, color: '#38bdf8', fontWeight: 600 }}>📄 {uploadedFileName}</span>
+                      <button 
+                        type="button" 
+                        onClick={removeUploadedResume}
+                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: 0, display: 'flex', alignItems: 'center' }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <span style={{ fontSize: 13, color: '#71717a' }}>No resume uploaded. AI will use standard role templates.</span>
+                  )}
+                </div>
+              </div>
+
+              <button className="btn btn-primary" onClick={startInterview} disabled={loading || uploading} style={{ width: '100%', padding: '14px', fontSize: 16, fontWeight: 700, justifyContent: 'center', background: 'linear-gradient(135deg, #06b6d4, #6366f1)' }}>
                 {loading ? '⏳ Preparing Interview Room...' : '🎙️ Begin Live AI Mock Interview'}
               </button>
             </div>
@@ -427,35 +788,48 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 16 }}>
               
               {/* STAGE STEPPER BAR */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', background: '#121216', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12 }}>
-                {[
-                  { num: 1, title: '1. Self-Intro & Background' },
-                  { num: 2, title: '2. Skills & Tech Stack' },
-                  { num: 3, title: '3. Project Deep-Dive' },
-                  { num: 4, title: '4. Technical Challenge' }
-                ].map((stg) => {
-                  const isActive = stageNumber === stg.num;
-                  const isDone = stageNumber > stg.num;
-                  return (
-                    <div key={stg.num} style={{ display: 'flex', alignItems: 'center', gap: 8, color: isActive ? '#38bdf8' : isDone ? '#10b981' : '#71717a', fontWeight: isActive ? 700 : 500, fontSize: 13 }}>
-                      <span style={{ width: 24, height: 24, borderRadius: '50%', background: isActive ? 'rgba(56,189,248,0.2)' : isDone ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: isActive ? '1px solid #38bdf8' : isDone ? '1px solid #10b981' : '1px solid rgba(255,255,255,0.1)', fontSize: 12 }}>
-                        {isDone ? '✓' : stg.num}
-                      </span>
-                      <span>{stg.title}</span>
-                    </div>
-                  );
-                })}
+              <div className="stepper-bar-container" style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '14px 20px', background: '#121216', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, width: '100%' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                  <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 12, color: stageNumber <= 5 ? '#38bdf8' : '#71717a', fontWeight: stageNumber <= 5 ? 700 : 400, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: stageNumber <= 5 ? '#38bdf8' : '#3f3f46' }} />
+                      Phase 1: Intro & Projects (1-5)
+                    </span>
+                    <span style={{ fontSize: 12, color: stageNumber > 5 && stageNumber <= 25 ? '#38bdf8' : '#71717a', fontWeight: stageNumber > 5 && stageNumber <= 25 ? 700 : 400, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: stageNumber > 5 && stageNumber <= 25 ? '#38bdf8' : '#3f3f46' }} />
+                      Phase 2: Tech Deep-Dive (6-25)
+                    </span>
+                    <span style={{ fontSize: 12, color: stageNumber > 25 ? '#38bdf8' : '#71717a', fontWeight: stageNumber > 25 ? 700 : 400, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: stageNumber > 25 ? '#38bdf8' : '#3f3f46' }} />
+                      Phase 3: Coding & Database (26-29)
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#a1a1aa' }}>
+                    Stage {stageNumber} / 29
+                  </span>
+                </div>
+                <div style={{ width: '100%', height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden', position: 'relative' }}>
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    height: '100%',
+                    width: `${(stageNumber / 29) * 100}%`,
+                    background: 'linear-gradient(90deg, #06b6d4, #6366f1)',
+                    transition: 'width 0.3s ease-in-out'
+                  }} />
+                </div>
               </div>
 
               {/* MAIN CONTENT AREA */}
-              <div style={{ display: 'grid', gridTemplateColumns: currentStage.requiresCode || stageNumber === 4 ? '1fr 1fr' : '1fr', gap: 20, flex: 1, overflow: 'hidden' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: currentStage.requiresCode ? '1fr 1fr' : '1fr', gap: 20, flex: 1, overflow: 'hidden' }}>
                 
                 {/* LEFT PANEL: INTERVIEWER CONVERSATION & RESPONSE AREA */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16, background: '#121216', padding: 20, borderRadius: 14, border: '1px solid rgba(255,255,255,0.08)', overflow: 'hidden' }}>
                   
                   {/* AI Interviewer Avatar Header */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 12, background: '#18181d', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
                       <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #38bdf8, #818cf8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, color: '#fff' }}>
                         🤖
                       </div>
@@ -463,6 +837,16 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
                         <div style={{ fontSize: 13, fontWeight: 700, color: '#f4f4f5' }}>Principal Interviewer ({effectiveJobRole})</div>
                         <div style={{ fontSize: 11, color: '#a1a1aa' }}>Stage {stageNumber}: {currentStage.stageTitle || 'Conversational Evaluation'}</div>
                       </div>
+                    </div>
+
+                    {/* Canvas Waveform Visualizer */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 16px', background: '#09090c', padding: '4px 10px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.05)' }}>
+                      <canvas 
+                        ref={canvasRef} 
+                        width={220} 
+                        height={28} 
+                        style={{ display: 'block', width: '220px', height: '28px' }} 
+                      />
                     </div>
 
                     <button className="btn btn-secondary btn-small" onClick={() => speakText(currentStage.interviewerMessage || currentStage.question)}>
@@ -510,10 +894,14 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
                       <label style={{ fontSize: 13, fontWeight: 600, color: '#a1a1aa' }}>
                         🗣️ Your Answer (Speak or Type naturally):
                       </label>
-                      <div style={{ display: 'flex', gap: 8 }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <button className="btn btn-secondary btn-small" onClick={requestHint} disabled={hintLoading}>
                           {hintLoading ? '⏳ Getting Hint...' : '💡 Hint'}
                         </button>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: handsFree ? '#38bdf8' : '#a1a1aa', padding: '4px 8px', background: 'rgba(255,255,255,0.04)', borderRadius: 6, border: '1px solid rgba(255,255,255,0.08)', margin: 0 }}>
+                          <input type="checkbox" checked={handsFree} onChange={(e) => setHandsFree(e.target.checked)} style={{ width: 14, height: 14 }} />
+                          🎙️ Hands-Free
+                        </label>
                         <button className={`btn btn-small ${isListening ? 'btn-danger' : 'btn-secondary'}`} onClick={toggleVoiceDictation}>
                           {isListening ? '⏹️ Stop Speech' : '🎙️ Speak (Dictate)'}
                         </button>
@@ -536,7 +924,7 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
                       style={{ width: '100%', padding: 14, borderRadius: 10, background: '#09090b', color: '#f4f4f5', border: '1px solid rgba(255,255,255,0.12)', fontSize: 14, lineHeight: 1.6, fontFamily: 'Inter, sans-serif' }}
                     />
 
-                    {(!currentStage.requiresCode && stageNumber !== 4) && (
+                    {!currentStage.requiresCode && (
                       <button className="btn btn-primary" onClick={submitAnswer} disabled={loading} style={{ padding: 14, fontSize: 15, fontWeight: 700, justifyContent: 'center', background: 'linear-gradient(135deg, #06b6d4, #6366f1)' }}>
                         {loading ? '⏳ AI Agent Evaluating Response...' : `⚡ Submit Answer to Interviewer`}
                       </button>
@@ -546,7 +934,7 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
                 </div>
 
                 {/* RIGHT PANEL: CODE WORKSPACE (FOR STAGE 4 / TECHNICAL STAGES) */}
-                {(currentStage.requiresCode || stageNumber === 4) && (
+                {currentStage.requiresCode && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 16, background: '#121216', padding: 20, borderRadius: 14, border: '1px solid rgba(255,255,255,0.08)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <div style={{ fontSize: 14, fontWeight: 700, color: '#f4f4f5', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -652,6 +1040,7 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
 
               <button className="btn btn-primary" onClick={proceedToNextStage} style={{ width: '100%', padding: 14, fontSize: 16, fontWeight: 700, justifyContent: 'center', background: 'linear-gradient(135deg, #06b6d4, #6366f1)' }}>
                 🚀 Proceed to Stage #{stageNumber + 1}: {evalResult.nextStage?.stageTitle || 'Next Stage'}
+                {handsFree && ` (Auto-advancing in ${feedbackCountdown}s)`}
               </button>
             </div>
           )}
@@ -730,7 +1119,7 @@ export default function LiveInterviewStudio({ isOpen, onClose, onSaveQuestions }
                 <button className="btn btn-primary" onClick={() => setStep('setup')} style={{ flex: 1, padding: 14, justifyContent: 'center', background: 'linear-gradient(135deg, #06b6d4, #6366f1)' }}>
                   🔄 Start Another Mock Interview
                 </button>
-                <button className="btn btn-secondary" onClick={onClose} style={{ padding: 14 }}>
+                <button className="btn btn-secondary" onClick={handleClose} style={{ padding: 14 }}>
                   Close Studio
                 </button>
               </div>

@@ -1,0 +1,9 @@
+John Doe - Senior React & Node.js Developer
+Experience:
+- Senior Fullstack Developer at TechCorp (2022 - Present)
+  * Designed and built a real-time analytics dashboard using React, Next.js, and Node.js.
+  * Optimized SQL queries to improve response times by 40%.
+  * Implemented Web Audio visualizers for interactive media tools.
+- Frontend Engineer at WebBuilders (2020 - 2022)
+  * Built highly interactive single page applications using React, Redux, and TailwindCSS.
+Skills: React, Node.js, Next.js, Web Audio API, Express, PostgreSQL, JavaScript, HTML, CSS.

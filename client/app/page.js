@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import CategorySection from './components/CategorySection';
@@ -8,6 +8,7 @@ import FileAnalyzer from './components/FileAnalyzer';
 import AIGenerateModal from './components/AIGenerateModal';
 import AskAIModal from './components/AskAIModal';
 import LiveInterviewStudio from './components/LiveInterviewStudio';
+const AILearningLab = lazy(() => import('./components/AILearningLab'));
 import Toast from './components/Toast';
 import { fetchQuestions, addQuestion, deleteQuestion } from '../lib/api';
 
@@ -22,6 +23,7 @@ export default function Home() {
   const [showAiModal, setShowAiModal] = useState(false);
   const [showAskAiModal, setShowAskAiModal] = useState(false);
   const [showLiveInterview, setShowLiveInterview] = useState(false);
+  const [showLearningLab, setShowLearningLab] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -114,6 +116,7 @@ export default function Home() {
         onAiGenerateClick={() => setShowAiModal(true)}
         onAskAiClick={() => setShowAskAiModal(true)}
         onLiveInterviewClick={() => setShowLiveInterview(true)}
+        onLearnClick={() => setShowLearningLab(true)}
         onToggleSidebar={() => setIsMobileSidebarOpen(prev => !prev)}
       />
 
@@ -223,6 +226,14 @@ export default function Home() {
         onClose={() => setShowLiveInterview(false)}
         onSaveQuestions={loadQuestions}
       />
+
+      {showLearningLab && (
+        <Suspense fallback={null}>
+          <AILearningLab
+            onClose={() => setShowLearningLab(false)}
+          />
+        </Suspense>
+      )}
 
       <Toast toasts={toasts} removeToast={removeToast} />
     </div>

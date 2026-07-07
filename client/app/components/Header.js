@@ -8,6 +8,7 @@ export default function Header({
   onAiGenerateClick,
   onAskAiClick,
   onLiveInterviewClick,
+  onLearnClick,
   onToggleSidebar
 }) {
   return (
@@ -44,6 +45,14 @@ export default function Header({
           title="Start Live Voice & Coding AI Mock Interview"
         >
           🎙️ <span className="btn-label">Live Interview</span>
+        </button>
+        <button
+          className="btn btn-secondary action-btn-learn"
+          onClick={onLearnClick}
+          style={{ borderColor: '#22c55e', color: '#22c55e' }}
+          title="AI Concept Learning & Visualizer Lab"
+        >
+          🎓 <span className="btn-label">Learning Lab</span>
         </button>
         <button
           className="btn btn-secondary action-btn-ask"

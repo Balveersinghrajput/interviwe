@@ -136,6 +136,7 @@ const questionSchema = new mongoose.Schema({
   question:     { type: String, required: true },
   answer:       { type: String, required: true },
   code_example: { type: String, default: '' },
+  youtube_link: { type: String, default: '' },
   is_user_added:{ type: Boolean, default: true },
   source_file:  { type: String, default: null },
 }, { timestamps: true });

@@ -6,6 +6,7 @@ const { connectDatabase } = require('./db');
 const questionsRouter = require('./routes/questions');
 const analyzeRouter = require('./routes/analyze');
 const interviewRouter = require('./routes/interview');
+const learningRouter = require('./routes/learning');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -48,6 +49,7 @@ app.use(rateLimiter(100, 60000)); // Apply rate limiter across API routes
 app.use('/api/questions', questionsRouter);
 app.use('/api/analyze', analyzeRouter);
 app.use('/api/interview', interviewRouter);
+app.use('/api/learning', learningRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {
